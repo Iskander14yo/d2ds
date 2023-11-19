@@ -17,6 +17,8 @@ import aiohttp
 Саша - Эншинт
 Искандер - Дивайн
 '''
+
+
 class RankSpread(Enum):
     LEGEND_LOW = 50
     LEGEND_TOP = 55
@@ -27,49 +29,70 @@ class RankSpread(Enum):
     IMMORTAL_LOW = 80
     IMMORTAL_TOP = 85
 
+
 '''
 Соединение монго, можете это не трогать, 
 только измените локалку, если у вас порт закрыт
 '''
+
+
 def create_mongo_connection():
     try:
-        #Менять соединение с монгой
+        # Менять соединение с монгой
         client = MongoClient("localhost", 27017)
         db = client.dota_db
         return client, db
     except pymongo.errors.ServerSelectionTimeoutError as err:
         print(err)
 
-#Метод для разделение батчей, можно не трогать
+
+# Метод для разделение батчей, можно не трогать
 def create_batches(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-#Поменяйте на свой токен стратз
+
+# Поменяйте на свой токен стратз
 local_stratz_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiYjJjNjQyM2EtZjlmNS00YmI1LWI2MmUtOWRiYzAyZDc2YzQ5IiwiU3RlYW1JZCI6IjM2NzY1MzgzNCIsIm5iZiI6MTY5OTk3MjM5MCwiZXhwIjoxNzMxNTA4MzkwLCJpYXQiOjE2OTk5NzIzOTAsImlzcyI6Imh0dHBzOi8vYXBpLnN0cmF0ei5jb20ifQ.-8nipaADxb1dGUcyKm9aEKtAcE9MS_MVY0khHC3ZhfE"
-#Нижний предел ранга, поменяйте на свой
+# Нижний предел ранга поменяйте на свой
 local_spread_bot = RankSpread.IMMORTAL_LOW.value
-#
+# Верхний предел поменять на свой
 local_spread_top = RankSpread.IMMORTAL_TOP.value
+# Количество запросов для id матча (default = 99)
 remain_opendota_requests = 2
+# Количество запросов для данных матча (default = 9900)
 remain_stratz_requests = 200
+# Количество одновременных запросов в stratz (default = 5)
 batch_size = 5
+# Ставьте тру, если запускаете первый раз.
+# После выполнения скрипта первый раз, ставьте false.
 first_run = False
+# Id для первого матча. Залезть в dotabuff
+# Найдите id какого нить матча, который был вчера и вставьте сюда
+# Лучше искать по своему рангу, потому что не гарантирую что ранг другого матча прокатит
 less_then_match = 7441443374
 
 mongo_client, mongo_db = create_mongo_connection()
+'''
+Коллекции монги:
+match_id_collection - коллекция id
+match_info_collection - обобщенная инфа по матчу
+full_match_collection - полная инфа по матчу (гигантский json)
+'''
 match_ids_coll = mongo_db.match_id_collection
 match_info = mongo_db.match_info_collection
 full_match = mongo_db.full_match_collection
 
 
 def opendota_request_match_ids(less_than_match_id):
+    # Сюда парсим id
     match_ids = list()
 
     i = remain_opendota_requests
     try:
 
         while i > 0:
+            # Запрос в опен апи
             req = str(
                 'https://api.opendota.com/api/publicMatches?'
                 'less_than_match_id=' + str(less_than_match_id) +
@@ -77,19 +100,19 @@ def opendota_request_match_ids(less_than_match_id):
                 + str(local_spread_top) + '&min_rank=' + str(local_spread_bot))
 
             public_matches = requests.get(req)
-
+            # вносим id в бд с краткой инфой по матчу
             result_info = match_info.insert_many(public_matches.json())
-
+            # проверяем что все окей
             if result_info is not None:
                 print(datetime.datetime.now(), ": matches left: ", i, 'log: ', result_info)
 
             # Чтобы запросы не блочило
             time.sleep(1)
-
+            # парсим ответ и забираем айдишники
             decoded = json.loads(public_matches.text)
 
             match_ids.extend((k['match_id'] for k in decoded))
-
+            # последний айди предыдущего листа, с него делаем следующий запрос
             less_than_match_id = match_ids[-1]
 
             i -= 1
@@ -125,6 +148,7 @@ headers = {"Authorization": f"Bearer {local_stratz_token}"}
 
 async def insert_match_ids_into_db(match_ids):
     try:
+        # Формируем айдишники для бд
         if first_run:
             insert_ids = [{'id': m_id,
                            'insert_time': datetime.datetime.now(tz=datetime.timezone.utc) + datetime.timedelta(hours=3,
@@ -134,10 +158,11 @@ async def insert_match_ids_into_db(match_ids):
             insert_ids = [{'id': m_id,
                            'insert_time': datetime.datetime.now(tz=datetime.timezone.utc) + datetime.timedelta(hours=3)}
                           for m_id in match_ids]
-
+        # Вносим айдищники в бд через update
         for i in insert_ids:
             update = {"$set": i}
             result_ids = match_ids_coll.update_one(i, update, upsert=True)
+            # проверяем на успех
             if result_ids is not None:
                 print(datetime.datetime.now(), ": match[id] = ", i.get('id'), "successfully inserted "
                                                                               "into db: @match_id_collection")
@@ -159,16 +184,16 @@ def get_yesterday_matches_from_mongo():
     try:
 
         mongo_client.admin.command('ping')
-        #Если вы один день не парсили матчи, поменяйте days на 2
+        # Если вы один день не парсили матчи, поменяйте days на 2
         yesterday = datetime.datetime.now() - datetime.timedelta(days=1, hours=1)
-
+        # для запроса: ниже получаем данные из бд между вчера и сегодня
         today = datetime.datetime.now()
 
         result = match_ids_coll.find({"insert_time": {"$gte": yesterday, "$lt": today}})
 
         if result is not None:
             print(datetime.datetime.now(), ": match ids successfully received from @match_id_collection")
-
+        # Отбираем только айдишники
         m_ids = [_id.get('id') for _id in result]
         return m_ids
 
@@ -181,6 +206,11 @@ def get_yesterday_matches_from_mongo():
     except Exception as e:
         print(datetime.datetime.now(), ": an error occurred in get_yesterday_matches_from_mongo method")
         print(e)
+
+
+'''
+Ниже я создаю батч из 5 queries для запроса в стратз
+'''
 
 
 def create_queries(match_id_batch):
@@ -880,26 +910,28 @@ def create_queries(match_id_batch):
 async def get_stratz_data(match_ids):
     batch_index = 0
     stratz_index = 0
+    # батч из айдишников, по умолчанию - список из 5 айдишников
     ids_batch = list(create_batches(match_ids, batch_size))
     try:
-
+        # цикл для получения всех запросов из стратза
         while (stratz_index < remain_stratz_requests) & (batch_index < len(ids_batch)):
-
+            # создаем батч из queries
             queries_batch = create_queries(ids_batch[batch_index])
-
+            # засекаем время
             start = datetime.datetime.now()
-
+            # дожидаемся запросов
             match_data = await stratz_api_calls(queries_batch)
-
+            # проверяем данные
             if match_data is None:
                 continue
             for match in match_data:
-
+                # проверяем конкретный матч
                 if match['data']['match'] is None:
                     print(datetime.datetime.now(), 'Match is None')
                     continue
 
                 else:
+                    # проверяем матч на то что обработан стратзом
                     if match['data']['match'].get('parsedDateTime') is None:
                         print(datetime.datetime.now(), 'Match[id]: ', match['data']['match'].get('id'),
                               'not parsed by Stratz yet')
@@ -915,12 +947,14 @@ async def get_stratz_data(match_ids):
                         else:
                             print(datetime.datetime.now(), 'Error occurred: current match is None: '
                                   , match['data']['match'].get('id'))
-
+            # перестаем засекать время
             end = datetime.datetime.now()
+            # если не прошло 6 секунд, засыпаем чтобы в сумме было 6 секунд
             if (end - start).seconds < 6:
                 time.sleep(6 - (end - start).seconds)
             print(datetime.datetime.now(), ': Batch[i] = ', batch_index, 'successfully inserted. ',
                   'Batches remain: ', str(len(ids_batch) - batch_index - 1))
+            # увеличиваем индексы пробежки массива
             batch_index += 1
             stratz_index += batch_size
 
@@ -934,6 +968,11 @@ async def get_stratz_data(match_ids):
         print(traceback.format_exc())
 
 
+'''
+Фомируем 1 запрос в стратз
+'''
+
+
 async def fetch(session, data):
     async with session.post(url, json=data, headers=headers) as response:
         return await response.json()
@@ -942,7 +981,9 @@ async def fetch(session, data):
 async def stratz_api_calls(query_batch):
     try:
         async with aiohttp.ClientSession() as session:
+            # формируем таски из батчей запросов
             tasks = [asyncio.ensure_future(fetch(session, data)) for data in query_batch]
+            # выполняем таски, получая запросы в респонс
             responses = await asyncio.gather(*tasks)
             return responses
     except Exception as e:
@@ -952,13 +993,19 @@ async def stratz_api_calls(query_batch):
 
 async def main():
     if first_run:
+        # получаем айдишники в первый раз
         ids = opendota_request_match_ids(less_then_match)
+        # отправляем айди и матчи в бд
         success = await insert_match_ids_into_db(ids)
 
     else:
+        # получаем вчерашние айдишники
         yesterday_matches = get_yesterday_matches_from_mongo()
+        # запрашиваем матчи за вчера
         ids = opendota_request_match_ids("")
+        # вносим айдишники матчей в бд
         success = await insert_match_ids_into_db(ids)
+        # получаем ответ от стратза и вносим в бд
         await get_stratz_data(yesterday_matches)
 
 
