@@ -59,18 +59,18 @@ local_spread_bot = RankSpread.IMMORTAL_LOW.value
 # Верхний предел поменять на свой
 local_spread_top = RankSpread.IMMORTAL_TOP.value
 # Количество запросов для id матча (default = 99)
-remain_opendota_requests = 2
+remain_opendota_requests = 1
 # Количество запросов для данных матча (default = 9900)
-remain_stratz_requests = 200
+remain_stratz_requests = 10
 # Количество одновременных запросов в stratz (default = 5)
-batch_size = 5
+batch_size = 1
 # Ставьте тру, если запускаете первый раз.
 # После выполнения скрипта первый раз, ставьте false.
 first_run = False
 # Id для первого матча. Залезть в dotabuff
 # Найдите id какого нить матча, который был вчера и вставьте сюда
 # Лучше искать по своему рангу, потому что не гарантирую что ранг другого матча прокатит
-less_then_match = 7441443374
+less_then_match = 7449549390
 
 mongo_client, mongo_db = create_mongo_connection()
 '''
@@ -936,9 +936,16 @@ async def get_stratz_data(match_ids):
                         print(datetime.datetime.now(), 'Match[id]: ', match['data']['match'].get('id'),
                               'not parsed by Stratz yet')
                     else:
-                        update = {"$set": {'match': match['data']['match'], 'insert_date': datetime.datetime.now()}}
-                        result = full_match.update_one({'match': match['data']['match'],
-                                                        'insert_date': datetime.datetime.now()}, update, upsert=True)
+                        check_for_duplicate = full_match.find_one({"_id": match['data']['match']['id']})
+
+                        if check_for_duplicate is None:
+                            print(datetime.datetime.now(), "System found duplicate, skipping it: Match [id] = ",
+                                  match['data']['match']['id'])
+                            continue
+                        result = full_match.insert_one({'_id': match['data']['match']['id'],
+                                                        'match': match['data']['match'],
+                                                        'insert_date': datetime.datetime.now(),
+                                                        'update_date': datetime.datetime.now()})
 
                         if result is not None:
                             print(datetime.datetime.now(), ": Current match id: ",
