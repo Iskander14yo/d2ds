@@ -59,18 +59,18 @@ local_spread_bot = RankSpread.IMMORTAL_LOW.value
 # Верхний предел поменять на свой
 local_spread_top = RankSpread.IMMORTAL_TOP.value
 # Количество запросов для id матча (default = 99)
-remain_opendota_requests = 1
+remain_opendota_requests = 10
 # Количество запросов для данных матча (default = 9900)
-remain_stratz_requests = 10
+remain_stratz_requests = 1000
 # Количество одновременных запросов в stratz (default = 5)
-batch_size = 1
+batch_size = 5
 # Ставьте тру, если запускаете первый раз.
 # После выполнения скрипта первый раз, ставьте false.
 first_run = False
 # Id для первого матча. Залезть в dotabuff
 # Найдите id какого нить матча, который был вчера и вставьте сюда
 # Лучше искать по своему рангу, потому что не гарантирую что ранг другого матча прокатит
-less_then_match = 7449549390
+less_then_match = 7451652617
 
 mongo_client, mongo_db = create_mongo_connection()
 '''
@@ -936,9 +936,11 @@ async def get_stratz_data(match_ids):
                         print(datetime.datetime.now(), 'Match[id]: ', match['data']['match'].get('id'),
                               'not parsed by Stratz yet')
                     else:
-                        filter = {'id': match['data']['match'].get('id')}
-                        update = {"$set": {'match': match['data']['match'], 'insert_date': datetime.datetime.now()}}
-                        result = full_match.update_one(filter, update, upsert=True)
+                        _filter = {'_id': match['data']['match'].get('id')}
+                        update = {"$set": {'_id': match['data']['match'].get('id'),
+                                           'match': match['data']['match'],
+                                           'insert_date': datetime.datetime.now()}}
+                        result = full_match.update_one(_filter, update, upsert=True)
 
                         if result is not None:
                             print(datetime.datetime.now(), ": Current match id: ",
@@ -1002,9 +1004,9 @@ async def main():
         # получаем вчерашние айдишники
         yesterday_matches = get_yesterday_matches_from_mongo()
         # запрашиваем матчи за вчера
-        ids = opendota_request_match_ids("")
+        #ids = opendota_request_match_ids("")
         # вносим айдишники матчей в бд
-        success = await insert_match_ids_into_db(ids)
+        #success = await insert_match_ids_into_db(ids)
         # получаем ответ от стратза и вносим в бд
         await get_stratz_data(yesterday_matches)
 
