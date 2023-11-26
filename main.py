@@ -5,7 +5,7 @@ import pymongo.errors
 import requests
 from enum import Enum
 import json
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 import datetime
 import asyncio
 import aiohttp
@@ -59,11 +59,11 @@ local_spread_bot = RankSpread.IMMORTAL_LOW.value
 # Верхний предел поменять на свой
 local_spread_top = RankSpread.IMMORTAL_TOP.value
 # Количество запросов для id матча (default = 99)
-remain_opendota_requests = 10
+remain_opendota_requests = 99
 # Количество запросов для данных матча (default = 9900)
-remain_stratz_requests = 1000
+remain_stratz_requests = 9900
 # Количество одновременных запросов в stratz (default = 5)
-batch_size = 5
+batch_size = 15
 # Ставьте тру, если запускаете первый раз.
 # После выполнения скрипта первый раз, ставьте false.
 first_run = False
@@ -98,7 +98,7 @@ def opendota_request_match_ids(less_than_match_id):
                 'less_than_match_id=' + str(less_than_match_id) +
                 '&max_rank='
                 + str(local_spread_top) + '&min_rank=' + str(local_spread_bot))
-
+            print(req)
             public_matches = requests.get(req)
             # вносим id в бд с краткой инфой по матчу
             result_info = match_info.insert_many(public_matches.json())
@@ -185,7 +185,7 @@ def get_yesterday_matches_from_mongo():
 
         mongo_client.admin.command('ping')
         # Если вы один день не парсили матчи, поменяйте days на 2
-        yesterday = datetime.datetime.now() - datetime.timedelta(days=1, hours=1)
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=1, hours=3)
         # для запроса: ниже получаем данные из бд между вчера и сегодня
         today = datetime.datetime.now()
 
@@ -919,43 +919,52 @@ async def get_stratz_data(match_ids):
             queries_batch = create_queries(ids_batch[batch_index])
             # засекаем время
             start = datetime.datetime.now()
+            print(start, ": Началась обработка батча")
             # дожидаемся запросов
             match_data = await stratz_api_calls(queries_batch)
             # проверяем данные
             if match_data is None:
                 continue
+
+            updates = []
+            print_updates = []
             for match in match_data:
                 # проверяем конкретный матч
                 if match['data']['match'] is None:
-                    print(datetime.datetime.now(), 'Match is None')
+                    print(datetime.datetime.now(), ': Match is None')
                     continue
 
                 else:
                     # проверяем матч на то что обработан стратзом
                     if match['data']['match'].get('parsedDateTime') is None:
-                        print(datetime.datetime.now(), 'Match[id]: ', match['data']['match'].get('id'),
+                        print(datetime.datetime.now(), ': Match[id]: ', match['data']['match'].get('id'),
                               'not parsed by Stratz yet')
                     else:
                         _filter = {'_id': match['data']['match'].get('id')}
                         update = {"$set": {'_id': match['data']['match'].get('id'),
                                            'match': match['data']['match'],
                                            'insert_date': datetime.datetime.now()}}
-                        result = full_match.update_one(_filter, update, upsert=True)
+                        updates.append(UpdateOne(_filter, update, upsert=True))
+                        print_updates.append(match['data']['match'].get('id'))
+                        #result = full_match.update_one(_filter, update, upsert=True)
+            if len(updates) > 0:
+                result = full_match.bulk_write(updates)
 
-                        if result is not None:
-                            print(datetime.datetime.now(), ": Current match id: ",
-                                  match['data']['match'].get('id'), "successfully inserted "
-                                                                    "into db: @full_match_collection", result)
-                        else:
-                            print(datetime.datetime.now(), 'Error occurred: current match is None: '
-                                  , match['data']['match'].get('id'))
+                if result is not None:
+                    print(datetime.datetime.now(), ': Batch[i] = ', batch_index, 'successfully inserted. ',
+                          'Batches remain: ', str(len(ids_batch) - batch_index - 1))
+                    print(print_updates)
+                    print(result)
+
+            else:
+                print(datetime.datetime.now(), 'Error occurred while inserting batch: ',
+                      str(len(ids_batch) - batch_index - 1))
             # перестаем засекать время
             end = datetime.datetime.now()
             # если не прошло 6 секунд, засыпаем чтобы в сумме было 6 секунд
-            if (end - start).seconds < 6:
-                time.sleep(6 - (end - start).seconds)
-            print(datetime.datetime.now(), ': Batch[i] = ', batch_index, 'successfully inserted. ',
-                  'Batches remain: ', str(len(ids_batch) - batch_index - 1))
+            if (end - start).seconds < 30:
+                print()
+                time.sleep(30 - (end - start).seconds)
             # увеличиваем индексы пробежки массива
             batch_index += 1
             stratz_index += batch_size
@@ -1004,9 +1013,9 @@ async def main():
         # получаем вчерашние айдишники
         yesterday_matches = get_yesterday_matches_from_mongo()
         # запрашиваем матчи за вчера
-        #ids = opendota_request_match_ids("")
+        ids = opendota_request_match_ids("")
         # вносим айдишники матчей в бд
-        #success = await insert_match_ids_into_db(ids)
+        success = await insert_match_ids_into_db(ids)
         # получаем ответ от стратза и вносим в бд
         await get_stratz_data(yesterday_matches)
 
