@@ -1,0 +1,27 @@
+version: '3.1'
+
+services:
+  mongodb:
+    image: mongo
+    volumes:
+      - mongo_d2ds:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: rootuser
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+    ports:
+      - "27017:27017"
+
+  python-app:
+    build: .
+    depends_on:
+      - mongodb
+    environment:
+      - MONGO_USERNAME=rootuser
+      - MONGO_PASSWORD=rootpass
+      - MONGO_HOSTNAME=mongodb
+    ports:
+      - "80:80"
+
+volumes:
+  mongo_d2ds:
+    external: true

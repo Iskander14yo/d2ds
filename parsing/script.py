@@ -1,6 +1,5 @@
 import asyncio
 import datetime
-import json
 import time
 import traceback
 
@@ -9,27 +8,23 @@ import pymongo.errors
 import requests
 from pymongo import UpdateOne
 
+from managers.mongo_manager import MongoManager
 from parsing.config import (BATCH_SIZE, FIRST_RUN, LESS_THEN_MATCH,
                             LOCAL_SPREAD_BOT, LOCAL_SPREAD_TOP,
                             LOCAL_STRATZ_TOKEN, OPENDOTA_URL,
                             REMAIN_OPENDOTA_REQUESTS, REMAIN_STRATZ_REQUESTS,
                             STRATZ_URL)
 from parsing.stratz_query import query
-from parsing.utils import create_batches, create_mongo_connection, logger
+from parsing.utils import create_batches
+from utils import logger
 
-mongo_client, mongo_db = create_mongo_connection()
-"""
-Коллекции монги:
-match_id_collection - коллекция id
-match_info_collection - обобщенная инфа по матчу
-full_match_collection - полная инфа по матчу (гигантский json)
-"""
-match_ids_coll = mongo_db.match_id_collection
-match_info = mongo_db.match_info_collection
-full_match = mongo_db.full_match_collection
+mongo_manager = MongoManager()
+match_ids_coll = mongo_manager.match_id_collection
+match_info = mongo_manager.match_info_collection
+full_match = mongo_manager.full_match_collection
 
 
-def opendota_request_match_ids(less_than_match_id: str):
+def opendota_request_match_ids(less_than_match_id: int) -> list[str]:
     # В этот список собираем id
     match_ids = list()
     i = REMAIN_OPENDOTA_REQUESTS
@@ -37,7 +32,7 @@ def opendota_request_match_ids(less_than_match_id: str):
     try:
         while i > 0:
             # Запрашиваем ID в opendota
-            req = str(
+            req_url = str(
                 f"{OPENDOTA_URL}?"
                 "less_than_match_id="
                 + str(less_than_match_id)
@@ -46,28 +41,21 @@ def opendota_request_match_ids(less_than_match_id: str):
                 + "&min_rank="
                 + str(LOCAL_SPREAD_BOT)
             )
-            public_matches = requests.get(req)
+            public_matches = requests.get(req_url)  # Шлем запрос - получаем 100 матчей (по идее)
+            if public_matches.status_code == 200:  # Проверяем статус запроса
+                matches_data = public_matches.json()
+                match_info.insert_many(matches_data)
+                logger.info(f"Request [{i}] successful; "
+                            f"{len(matches_data)} matches processed.")
 
-            logger.info(f"Request {req}; status code {public_matches.status_code}")
-            if public_matches:
-                # Вносим id в бд с краткой инфой по матчу
-                result_info = match_info.insert_many(public_matches.json())
-                # Проверяем, что все окей
-                if result_info is not None:
-                    logger.info(f"Matches left: {i}\nLog: {result_info}")
-
-                # Парсим ответ и забираем айдишники
-                decoded = json.loads(public_matches.text)
-
-                match_ids.extend((k["match_id"] for k in decoded))
-                # последний айди предыдущего листа, с него делаем следующий запрос
+                match_ids.extend((k["match_id"] for k in matches_data))
                 less_than_match_id = match_ids[-1]
 
-                # Чтобы запросы не блочило
                 time.sleep(1)
                 i -= 1
             else:
-                logger.warn("GOT NO MATCHES FROM REQUEST")
+                logger.warning(f"Request [{i}] failed; "
+                               f"status code {public_matches.status_code}.")
 
     except requests.ConnectionError as e:
         logger.error("Connection error occurred in opendota_request_match_ids method: %s", e)
@@ -85,7 +73,7 @@ def opendota_request_match_ids(less_than_match_id: str):
     return match_ids
 
 
-async def insert_match_ids_into_db(match_ids: list):
+async def insert_match_ids_into_db(match_ids: list[str]) -> bool:
     try:
         # Формируем айдишники для бд
         if FIRST_RUN:
@@ -131,7 +119,7 @@ async def insert_match_ids_into_db(match_ids: list):
 
 def get_yesterday_matches_from_mongo() -> list[str]:
     try:
-        mongo_client.admin.command("ping")
+        mongo_manager.client.admin.command("ping")
         # Если вы один день не парсили матчи, поменяйте days на 2
         yesterday = datetime.datetime.now() - datetime.timedelta(days=1, hours=3)
         # для запроса: ниже получаем данные из бд между вчера и сегодня

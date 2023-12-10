@@ -5,6 +5,7 @@
 Саша - Эншинт
 Искандер - Дивайн
 """
+import datetime
 from enum import Enum
 
 
@@ -22,19 +23,22 @@ class RankSpread(Enum):
 STRATZ_URL = "https://api.stratz.com/graphql"
 OPENDOTA_URL = "https://api.opendota.com/api/publicMatches"
 
-
-# Поменяйте на свой токен стратз
+# Токен стратца (вставить свой)
 LOCAL_STRATZ_TOKEN = "YOUR_API_TOKEN"
-# Нижний предел ранга поменяйте на свой
+# Нижний предел ранга (вставить свой)
 LOCAL_SPREAD_BOT = RankSpread.IMMORTAL_LOW.value
-# Верхний предел поменять на свой
+# Верхний предел ранга (вставить свой)
 LOCAL_SPREAD_TOP = RankSpread.IMMORTAL_TOP.value
-# Количество запросов для id матча (default = 99)
+
+# Локальное время
+UTC_PLUS_3 = datetime.timezone(datetime.timedelta(hours=3))
+# Количество запросов в OpenDota (default = 99)
 REMAIN_OPENDOTA_REQUESTS = 99
-# Количество запросов для данных матча (default = 9900)
+# Количество запросов в Stratz (default = 9900)
 REMAIN_STRATZ_REQUESTS = 9900
 # Количество одновременных запросов в stratz (default = 5)
 BATCH_SIZE = 15
+
 # Ставьте тру, если запускаете первый раз.
 # После выполнения скрипта первый раз, ставьте false.
 FIRST_RUN = False
